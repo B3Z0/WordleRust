@@ -1,6 +1,9 @@
-use macroquad::prelude::*;
+use macroquad::{
+    prelude::*,
+    rand::{gen_range, srand},
+};
 
-const WORDS: [&str; 6] = ["apple", "cigar", "sissy", "human", "zesty", "naval"];
+const DICT: &str = include_str!("../words.txt");
 
 fn window_conf() -> Conf {
     Conf {
@@ -75,8 +78,10 @@ async fn main() {
     let screen_w = screen_width();
     let screen_h = screen_height();
 
-    let rng = rand::gen_range(0, WORDS.len());
-    let secret_word: &str = WORDS[rng];
+    let words: Vec<&str> = DICT.lines().filter(|w| w.len() == 5).collect();
+
+    srand(macroquad::miniquad::date::now() as u64);
+    let secret_word: &str = words[gen_range(0, words.len())];
 
     println!("Welcome to rust worlde!");
     println!("Guess the 5-letter word. You have 6 tries.");
@@ -127,7 +132,7 @@ async fn main() {
                             if guess[i] == secret_word.chars().nth(i).unwrap() {
                                 game.rows[guess_count].square[i].color = GREEN;
                             } else if secret_word.contains(guess[i]) {
-                                game.rows[guess_count].square[i].color = YELLOW;
+                                game.rows[guess_count].square[i].color = DARKBROWN;
                             } else {
                                 game.rows[guess_count].square[i].color = DARKGRAY;
                             }
@@ -175,7 +180,14 @@ async fn main() {
                     draw_text(
                         &square.letter.to_string(),
                         square.x + square.size / 2.0
-                            - measure_text(&square.letter.to_string(), None, square.size as u16, 1.0).width / 2.0,
+                            - measure_text(
+                                &square.letter.to_string(),
+                                None,
+                                square.size as u16,
+                                1.0,
+                            )
+                            .width
+                                / 2.0,
                         square.y + square.size * 0.75,
                         square.size / 1.5,
                         WHITE,
