@@ -1,8 +1,79 @@
-use macroquad::prelude::*;
+use std::time::{self, Instant};
+
+use macroquad::{prelude::*, rand::gen_range};
 
 const SCREEN_WIDTH: i32 = 800;
 const SCREEN_HEIGHT: i32 = 600;
 const STD_FONT_SIZE: f32 = 32.;
+
+struct Square {
+    x: f32,
+    y: f32,
+    size: f32,
+    speed: f32,
+    color: Color,
+}
+
+impl Square {
+    fn new(x: f32, y: f32, size: f32, color: Color, speed: f32) -> Self {
+        Square {
+            x: x,
+            y: y,
+            size: size,
+            color: color,
+            speed: speed,
+        }
+    }
+}
+
+struct Enemies {
+    enemies: Vec::<Square>,
+}
+
+impl Enemies {
+    fn new() -> Self {
+        Enemies {
+            enemies: Vec::new(),
+        }
+    }
+
+    fn gen_new_enemies(&mut self) {
+        let screen_w = screen_width() as i32;
+        let nr_enemies = gen_range(1, 7);
+
+        for _ in 0..nr_enemies {
+            let x = gen_range(0, screen_w - 32) as f32;
+
+            let speed = gen_range(10, 91) as f32 / 10.;
+
+            let enemy = Square::new(x, -32., 32., RED, speed);
+            self.enemies.push(enemy);
+        }
+
+    }
+
+    #[inline]
+    pub fn update(&mut self) {
+        for enemy in &mut self.enemies {
+            if enemy.y < screen_height() {
+                enemy.y += enemy.speed;
+            }
+        }
+        self.enemies.retain(|sq| sq.y < screen_height());
+    }
+
+    #[inline]
+    pub fn draw(&self) {
+        for enemy in &self.enemies {
+            let x = enemy.x as f32;
+            let y = enemy.y as f32;
+            let w = enemy.size;
+            let h = enemy.size;
+            let color = enemy.color;
+            draw_rectangle(x, y, w, h, color);
+        }
+    }
+}
 
 struct Player {
     x: i32,
@@ -13,7 +84,7 @@ struct Player {
 }
 
 impl Player {
-    fn new(x: i32, y: i32, r: f32, color: Color, health: u8) -> Player {
+    fn new(x: i32, y: i32, r: f32, color: Color, health: u8) -> Self {
         Player {
             x: x,
             y: y,
@@ -21,6 +92,16 @@ impl Player {
             color: color,
             health: health,
         }
+    }
+
+
+    #[inline]
+    fn draw(&self) {
+        let x = self.x as f32;
+        let y = self.y as f32;
+        let r = self.r;
+        let color = self.color;
+        draw_circle(x, y, r, color);
     }
 }
 
@@ -43,18 +124,10 @@ fn draw_ui(hp: u8) {
 }
 
 #[inline]
-fn draw_player(player: &Player) {
-    let x = player.x as f32;
-    let y = player.y as f32;
-    let r = player.r;
-    let color = player.color;
-    draw_circle(x, y, r, color);
-}
-
-#[inline]
-fn draw_controller(player: &Player) {
-    draw_player(player);
+fn draw_controller(player: &Player, enemies: &Enemies) {
+    player.draw();
     draw_ui(player.health);
+    enemies.draw();
 }
 
 fn collide_mouse_basic_shape(mouse_pos: (f32, f32), shape_type: &str, shape_params: (i32, i32, f32, f32)) -> bool {
@@ -80,7 +153,7 @@ fn collide_mouse_basic_shape(mouse_pos: (f32, f32), shape_type: &str, shape_para
     }
 }
 
-fn event_handler(player: &mut Player, last_mouse_pos: &mut (f32, f32)) {
+fn event_handler(player: &mut Player, last_mouse_pos: &mut (f32, f32), enemies: &mut Enemies, now: &mut Instant) {
     //keyboard events
     let keys_pressed = get_keys_pressed();
     for key in keys_pressed {
@@ -123,12 +196,18 @@ fn event_handler(player: &mut Player, last_mouse_pos: &mut (f32, f32)) {
 
     *last_mouse_pos = mouse_pos;
 
-}
+    enemies.update();
 
+    let elapsed = std::time::Instant::now() - *now;
+    if elapsed.as_millis() >= 1800 { //1000 == 1 sec
+        enemies.gen_new_enemies();
+        *now += elapsed;
+    }
+}
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Wordle".to_string(),
+        window_title: "Falling suqares".to_string(),
         window_width: SCREEN_WIDTH,
         window_height: SCREEN_HEIGHT,
         ..Default::default()
@@ -138,7 +217,11 @@ fn window_conf() -> Conf {
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut player = Player::new(200, 200, 30., YELLOW, 100);
-    let mut last_mouse_pos: (f32, f32) = mouse_position();
+    let mut last_mouse_pos = mouse_position();
+    let mut enemies = Enemies::new();
+
+    let mut now = std::time::Instant::now();
+
     loop {
         clear_background(BLACK);
 
@@ -150,11 +233,11 @@ async fn main() {
         
         // println!("b = ({}, {})", player.x, player.y);
 
-        event_handler(&mut player, &mut last_mouse_pos);
+        event_handler(&mut player, &mut last_mouse_pos, &mut enemies, &mut now);
 
         // println!("a = ({}, {})", player.x, player.y);
 
-        draw_controller(&player);
+        draw_controller(&player, &enemies);
         
         next_frame().await
     }
