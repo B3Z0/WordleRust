@@ -6,7 +6,7 @@ const PADDING: usize = (CELL_SIZE * 6.) as usize;
 const SCREEN_WIDTH: i32 = PADDING as i32 + COLS as i32 * CELL_SIZE as i32 + PADDING as i32;
 const SCREEN_HEIGHT: i32 = PADDING as i32 + ROWS as i32 * CELL_SIZE as i32;
 const STD_FONT_SIZE: f32 = 32.;
-const CELL_SIZE: f32 = 30.;
+const CELL_SIZE: f32 = 22.;
 
 type Board = [[Option<Color>; COLS]; ROWS];
 
@@ -25,6 +25,14 @@ impl PieceKind {
             PieceKind::O => YELLOW,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct ActivePiece {
+    kind: PieceKind,
+    rotation: u8,
+    x: i32,
+    y: i32,
 }
 
 impl ActivePiece {
@@ -49,19 +57,61 @@ impl ActivePiece {
             ],
         }
     }
-}
 
-#[derive(Clone, Copy)]
-struct ActivePiece {
-    kind: PieceKind,
-    rotation: u8,
-    x: i32,
-    y: i32,
+    fn fall(&mut self, fall_timer: &mut f32, fall_interval: f32) {
+        *fall_timer += get_frame_time();
+        if *fall_timer > fall_interval {
+            self.y += 1;
+            *fall_timer = 0.0;
+        }
+    }
+
+    fn draw_as_active(&self) {
+        match self.kind {
+            PieceKind::O => {
+                for (x, y) in self.blocks() {
+                    let (draw_x, draw_y) = Game::grid_to_screen_coords(y as usize, x as usize);
+                    draw_rectangle(draw_x, draw_y, CELL_SIZE, CELL_SIZE, self.kind.color());
+                }
+            }
+        }
+    }
+
+    fn draw_as_projection(&self) {
+        match self.kind {
+            PieceKind::O => {
+                for (x, y) in self.blocks() {
+                    let (draw_x, draw_y) = Game::grid_to_screen_coords(y as usize, x as usize);
+                    draw_rectangle_lines(
+                        draw_x,
+                        draw_y,
+                        CELL_SIZE,
+                        CELL_SIZE,
+                        2.0,
+                        self.kind.color(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn collide_check(&self, board: &Board) -> bool {
+        for (x, y) in self.blocks() {
+            if x < 0 || x >= COLS as i32 || y < 0 || y >= ROWS as i32 {
+                return true;
+            }
+            if board[y as usize][x as usize].is_some() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 struct Game {
     board: Board,
     active: ActivePiece,
+    projection: ActivePiece,
     next: PieceKind,
 
     fall_timer: f32,
@@ -77,6 +127,7 @@ impl Game {
         Self {
             board: empty_board(),
             active: ActivePiece::new(PieceKind::O),
+            projection: ActivePiece::new(PieceKind::O),
             next: PieceKind::O,
             fall_timer: 0.0,
             fall_interval: 1.0,
@@ -91,24 +142,7 @@ impl Game {
         (x, y)
     }
 
-    fn active_collide_check(&mut self) -> bool {
-        println!("--");
-        for (x, y) in self.active.blocks() {
-            println!("Checking block at ({}, {})", x, y);
-            if x < 0 || x >= COLS as i32 || y < 0 || y >= ROWS as i32 {
-                println!("Collision with boundary at ({}, {})", x, y);
-                return true;
-            }
-            if self.board[y as usize][x as usize].is_some() {
-                println!("Collision with placed block at ({}, {})", x, y);
-                return true;
-            }
-        }
-        false
-    }
-
-    fn event_handler(&mut self) {
-        //keyboard events
+    fn key_events(&mut self) {
         let keys_pressed = get_keys_pressed();
         for key in keys_pressed {
             match key {
@@ -117,19 +151,19 @@ impl Game {
                 }
                 KeyCode::Right => {
                     self.active.x += 1;
-                    if self.active_collide_check() {
+                    if self.active.collide_check(&self.board) {
                         self.active.x -= 1;
                     }
                 }
                 KeyCode::Left => {
                     self.active.x -= 1;
-                    if self.active_collide_check() {
+                    if self.active.collide_check(&self.board) {
                         self.active.x += 1;
                     }
                 }
                 KeyCode::Down => {
                     self.active.y += 1;
-                    if self.active_collide_check() {
+                    if self.active.collide_check(&self.board) {
                         self.active.y -= 1;
                     }
                 }
@@ -137,8 +171,50 @@ impl Game {
             }
         }
     }
+
+    fn lock_active_piece(&mut self) {
+        for (x, y) in self.active.blocks() {
+            if y >= 0 && y < ROWS as i32 && x >= 0 && x < COLS as i32 {
+                self.board[y as usize][x as usize] = Some(self.active.kind.color());
+            }
+        }
+    }
+
+    fn new_active_piece(&mut self) {
+        self.active = ActivePiece::new(self.next);
+        self.next = PieceKind::O;
+    }
+
+    fn update_projection(&mut self) {
+        self.projection = self.active;
+        while !self.projection.collide_check(&self.board) {
+            self.projection.y += 1;
+        }
+        self.projection.y -= 1;
+    }
+
+    fn active_event_handler(&mut self) {
+        self.update_projection();
+
+        self.active.fall(&mut self.fall_timer, self.fall_interval);
+        if self.active.collide_check(&self.board) {
+            self.active.y -= 1;
+
+            self.lock_active_piece();
+
+            self.new_active_piece();
+        }
+    }
+
+    fn event_handler(&mut self) {
+        self.key_events();
+
+        self.active_event_handler();
+    }
+
     fn draw_manager(&self) {
-        self.graphics.draw_manager(&self.board, &self.active);
+        self.graphics
+            .draw_manager(&self.board, &self.active, &self.projection);
     }
 }
 
@@ -217,28 +293,25 @@ impl DrawHandler {
     }
 
     fn draw_active_piece(&self, active: &ActivePiece) {
-        for (x, y) in active.blocks() {
-            let (screen_x, screen_y) = Game::grid_to_screen_coords(y as usize, x as usize);
-            draw_rectangle(
-                screen_x,
-                screen_y,
-                CELL_SIZE,
-                CELL_SIZE,
-                active.kind.color(),
-            );
-        }
+        active.draw_as_active();
     }
 
-    pub fn draw_manager(&self, board: &Board, active: &ActivePiece) {
+    fn draw_projection(&self, projection: &ActivePiece) {
+        projection.draw_as_projection();
+    }
+
+    pub fn draw_manager(&self, board: &Board, active: &ActivePiece, projection: &ActivePiece) {
         Self::draw_text_centered("Vlad's Tetris", 50.0, STD_FONT_SIZE, WHITE);
 
         self.draw_grid();
 
         self.draw_next_piece();
 
-        self.draw_board(board);
+        self.draw_board(&board);
 
-        self.draw_active_piece(active);
+        self.draw_active_piece(&active);
+
+        self.draw_projection(&projection);
     }
 }
 
@@ -255,7 +328,7 @@ fn window_conf() -> Conf {
 async fn main() {
     let mut game = Game::new();
     game.board[ROWS - 1][COLS / 2] = Some(RED); //test block
-    loop {
+    while !game.game_over {
         clear_background(BLACK);
 
         game.event_handler();
