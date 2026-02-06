@@ -106,6 +106,12 @@ impl ActivePiece {
         }
         false
     }
+
+    fn lock_piece(&self, board: &mut Board) {
+        for (x, y) in self.blocks() {
+            board[y as usize][x as usize] = Some(self.kind.color());
+        }
+    }
 }
 
 struct Game {
@@ -143,40 +149,64 @@ impl Game {
     }
 
     fn key_events(&mut self) {
-        let keys_pressed = get_keys_pressed();
-        for key in keys_pressed {
-            match key {
-                KeyCode::Escape => {
-                    std::process::exit(0);
-                }
-                KeyCode::Right => {
-                    self.active.x += 1;
-                    if self.active.collide_check(&self.board) {
-                        self.active.x -= 1;
-                    }
-                }
-                KeyCode::Left => {
-                    self.active.x -= 1;
-                    if self.active.collide_check(&self.board) {
-                        self.active.x += 1;
-                    }
-                }
-                KeyCode::Down => {
-                    self.active.y += 1;
-                    if self.active.collide_check(&self.board) {
-                        self.active.y -= 1;
-                    }
-                }
-                _ => {}
+        // let keys_pressed = Vec::new();
+
+        // for key in keys_pressed {
+        //     match key {
+        //         KeyCode::Escape => {
+        //             std::process::exit(0);
+        //         }
+        //         KeyCode::Right => {
+        //             self.active.x += 1;
+        //             if self.active.collide_check(&self.board) {
+        //                 self.active.x -= 1;
+        //             }
+        //         }
+        //         KeyCode::Left => {
+        //             self.active.x -= 1;
+        //             if self.active.collide_check(&self.board) {
+        //                 self.active.x += 1;
+        //             }
+        //         }
+        //         KeyCode::Down => {
+        //             self.active.y += 1;
+        //             if self.active.collide_check(&self.board) {
+        //                 self.active.y -= 1;
+        //             }
+        //         }
+        //         KeyCode::Space => {
+        //             self.active = self.projection;
+        //             self.active.lock_piece(&mut self.board);
+        //             self.new_active_piece();
+        //         }
+        //         _ => {}
+        //     }
+        // }
+        if is_key_down(KeyCode::Right) {
+            self.active.x += 1;
+            if self.active.collide_check(&self.board) {
+                self.active.x -= 1;
             }
         }
-    }
-
-    fn lock_active_piece(&mut self) {
-        for (x, y) in self.active.blocks() {
-            if y >= 0 && y < ROWS as i32 && x >= 0 && x < COLS as i32 {
-                self.board[y as usize][x as usize] = Some(self.active.kind.color());
+        if is_key_down(KeyCode::Left) {
+            self.active.x -= 1;
+            if self.active.collide_check(&self.board) {
+                self.active.x += 1;
             }
+        }
+        if is_key_down(KeyCode::Down) {
+            self.active.y += 1;
+            if self.active.collide_check(&self.board) {
+                self.active.y -= 1;
+            }
+        }
+        if is_key_pressed(KeyCode::Space) {
+            self.active = self.projection;
+            self.active.lock_piece(&mut self.board);
+            self.new_active_piece();
+        }
+        if is_key_pressed(KeyCode::Escape) {
+            std::process::exit(0);
         }
     }
 
@@ -193,17 +223,22 @@ impl Game {
         self.projection.y -= 1;
     }
 
+    fn check_piece_lock(&mut self) {
+        if self.active.collide_check(&self.board) {
+            self.active.y -= 1;
+
+            self.active.lock_piece(&mut self.board);
+
+            self.new_active_piece();
+        }
+    }
+
     fn active_event_handler(&mut self) {
         self.update_projection();
 
         self.active.fall(&mut self.fall_timer, self.fall_interval);
-        if self.active.collide_check(&self.board) {
-            self.active.y -= 1;
 
-            self.lock_active_piece();
-
-            self.new_active_piece();
-        }
+        self.check_piece_lock();
     }
 
     fn event_handler(&mut self) {
