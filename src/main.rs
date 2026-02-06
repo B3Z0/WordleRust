@@ -17,12 +17,14 @@ fn empty_board() -> Board {
 #[derive(Clone, Copy)]
 enum PieceKind {
     O,
+    Z,
 }
 
 impl PieceKind {
     fn color(&self) -> Color {
         match self {
             PieceKind::O => YELLOW,
+            PieceKind::Z => RED,
         }
     }
 }
@@ -57,6 +59,12 @@ impl ActivePiece {
                 (self.x, self.y + 1),
                 (self.x + 1, self.y + 1),
             ],
+            PieceKind::Z => [
+                (self.x, self.y),
+                (self.x + 1, self.y),
+                (self.x + 1, self.y + 1),
+                (self.x + 2, self.y + 1),
+            ],
         }
     }
 
@@ -76,12 +84,31 @@ impl ActivePiece {
                     draw_rectangle(draw_x, draw_y, CELL_SIZE, CELL_SIZE, self.kind.color());
                 }
             }
+            PieceKind::Z => {
+                for (x, y) in self.blocks() {
+                    let (draw_x, draw_y) = Game::grid_to_screen_coords(y as usize, x as usize);
+                    draw_rectangle(draw_x, draw_y, CELL_SIZE, CELL_SIZE, self.kind.color());
+                }
+            }
         }
     }
 
     fn draw_as_projection(&self) {
         match self.kind {
             PieceKind::O => {
+                for (x, y) in self.blocks() {
+                    let (draw_x, draw_y) = Game::grid_to_screen_coords(y as usize, x as usize);
+                    draw_rectangle_lines(
+                        draw_x,
+                        draw_y,
+                        CELL_SIZE,
+                        CELL_SIZE,
+                        2.0,
+                        self.kind.color(),
+                    );
+                }
+            },
+            PieceKind::Z => {
                 for (x, y) in self.blocks() {
                     let (draw_x, draw_y) = Game::grid_to_screen_coords(y as usize, x as usize);
                     draw_rectangle_lines(
@@ -248,8 +275,15 @@ impl Game {
     }
 
     fn new_active_piece(&mut self) {
+        self.next = if rand::gen_range(0, 2) == 0 {
+            PieceKind::O
+        } else {
+            PieceKind::Z
+        };
+
+
         self.active = ActivePiece::new(self.next);
-        self.next = PieceKind::O;
+        self.projection = self.active;
     }
 
     fn update_projection(&mut self) {
