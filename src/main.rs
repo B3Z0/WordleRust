@@ -30,6 +30,7 @@ impl PieceKind {
 #[derive(Clone, Copy)]
 struct ActivePiece {
     kind: PieceKind,
+    direction: i8,
     rotation: u8,
     x: i32,
     y: i32,
@@ -40,6 +41,7 @@ impl ActivePiece {
         // Spawn near top center
         Self {
             kind,
+            direction: 0,
             rotation: 0,
             x: (COLS as i32 / 2) - 1,
             y: 0,
@@ -58,9 +60,9 @@ impl ActivePiece {
         }
     }
 
-    fn fall(&mut self, fall_timer: &mut f32, fall_interval: f32) {
-        *fall_timer += get_frame_time();
-        if *fall_timer > fall_interval {
+    fn fall(&mut self, fall_timer: &mut f32, fall_interval: f32, dt: f32) {
+        *fall_timer += dt;
+        if *fall_timer >= fall_interval {
             self.y += 1;
             *fall_timer = 0.0;
         }
@@ -123,6 +125,12 @@ struct Game {
     fall_timer: f32,
     fall_interval: f32,
 
+    move_timer: f32,
+    move_interval: f32,
+
+    soft_drop_held: bool,
+    insta_drop_held: bool,
+
     game_over: bool,
 
     graphics: DrawHandler,
@@ -137,6 +145,13 @@ impl Game {
             next: PieceKind::O,
             fall_timer: 0.0,
             fall_interval: 1.0,
+
+            move_timer: 0.0,
+            move_interval: 0.12,
+
+            soft_drop_held: false,
+            insta_drop_held: false,
+
             game_over: false,
             graphics: DrawHandler,
         }
@@ -149,65 +164,87 @@ impl Game {
     }
 
     fn key_events(&mut self) {
-        // let keys_pressed = Vec::new();
+        let keys_pressed = get_keys_down();
+        self.active.direction = 0;
+        let was_soft_drop_held = self.soft_drop_held;
 
-        // for key in keys_pressed {
-        //     match key {
-        //         KeyCode::Escape => {
-        //             std::process::exit(0);
-        //         }
-        //         KeyCode::Right => {
-        //             self.active.x += 1;
-        //             if self.active.collide_check(&self.board) {
-        //                 self.active.x -= 1;
-        //             }
-        //         }
-        //         KeyCode::Left => {
-        //             self.active.x -= 1;
-        //             if self.active.collide_check(&self.board) {
-        //                 self.active.x += 1;
-        //             }
-        //         }
-        //         KeyCode::Down => {
-        //             self.active.y += 1;
-        //             if self.active.collide_check(&self.board) {
-        //                 self.active.y -= 1;
-        //             }
-        //         }
-        //         KeyCode::Space => {
-        //             self.active = self.projection;
-        //             self.active.lock_piece(&mut self.board);
-        //             self.new_active_piece();
-        //         }
-        //         _ => {}
+        let mut down_key = false;
+        let mut space = false;
+        for key in keys_pressed {
+            match key {
+                KeyCode::Escape => {
+                    std::process::exit(0);
+                }
+                KeyCode::Right => {
+                    self.active.direction = 1;
+                    println!("Right pressed");
+                }
+                KeyCode::Left => {
+                    self.active.direction = -1;
+                    println!("Left pressed");
+                }
+                KeyCode::Down => {
+                    if self.soft_drop_held == false {
+                        self.active.y += 1;
+                    }
+                    self.soft_drop_held = true;
+                    down_key = true;
+
+                }
+                KeyCode::Space => {
+                    if !self.insta_drop_held {
+                        self.active = self.projection;
+                        self.active.lock_piece(&mut self.board);
+                        self.new_active_piece();
+                    }
+                    self.insta_drop_held = true;
+                    space = true;
+                }
+                _ => {}
+            }
+        }
+        if !down_key {
+            self.soft_drop_held = false;
+        }
+
+        if !space {
+            self.insta_drop_held = false;
+        }
+
+        // If soft drop state changes, reset fall timer so it doesn't "carry over"
+        // between normal gravity and soft drop.
+        if self.soft_drop_held != was_soft_drop_held {
+            self.fall_timer = 0.0;
+        }
+
+        // let keys_pressed = Vec::new();
+        // self.active.direction = 0;
+        // if is_key_down(KeyCode::Right) {
+        //     self.active.x += 1;
+        //     if self.active.collide_check(&self.board) {
+        //         self.active.x -= 1;
         //     }
         // }
-        if is_key_down(KeyCode::Right) {
-            self.active.x += 1;
-            if self.active.collide_check(&self.board) {
-                self.active.x -= 1;
-            }
-        }
-        if is_key_down(KeyCode::Left) {
-            self.active.x -= 1;
-            if self.active.collide_check(&self.board) {
-                self.active.x += 1;
-            }
-        }
-        if is_key_down(KeyCode::Down) {
-            self.active.y += 1;
-            if self.active.collide_check(&self.board) {
-                self.active.y -= 1;
-            }
-        }
-        if is_key_pressed(KeyCode::Space) {
-            self.active = self.projection;
-            self.active.lock_piece(&mut self.board);
-            self.new_active_piece();
-        }
-        if is_key_pressed(KeyCode::Escape) {
-            std::process::exit(0);
-        }
+        // if is_key_down(KeyCode::Left) {
+        //     self.active.x -= 1;
+        //     if self.active.collide_check(&self.board) {
+        //         self.active.x += 1;
+        //     }
+        // }
+        // if is_key_down(KeyCode::Down) {
+        //     self.active.y += 1;
+        //     if self.active.collide_check(&self.board) {
+        //         self.active.y -= 1;
+        //     }
+        // }
+        // if is_key_pressed(KeyCode::Space) {
+        //     self.active = self.projection;
+        //     self.active.lock_piece(&mut self.board);
+        //     self.new_active_piece();
+        // }
+        // if is_key_pressed(KeyCode::Escape) {
+        //     std::process::exit(0);
+        // }
     }
 
     fn new_active_piece(&mut self) {
@@ -223,6 +260,7 @@ impl Game {
         self.projection.y -= 1;
     }
 
+
     fn check_piece_lock(&mut self) {
         if self.active.collide_check(&self.board) {
             self.active.y -= 1;
@@ -232,19 +270,44 @@ impl Game {
             self.new_active_piece();
         }
     }
+    
+    fn update_active(&mut self, dt: f32) {
+        if self.active.direction == 0 {
+            self.move_timer = self.move_interval;
+            return;
+        }
 
-    fn active_event_handler(&mut self) {
+        self.move_timer += dt;
+        while self.move_timer >= self.move_interval {
+            self.active.x += self.active.direction as i32;
+            if self.active.collide_check(&self.board) {
+                self.active.x -= self.active.direction as i32;
+            }
+            self.move_timer -= self.move_interval;
+        }
+    }
+
+    fn active_event_handler(&mut self, dt: f32) {
+        self.update_active(dt);
+
         self.update_projection();
 
-        self.active.fall(&mut self.fall_timer, self.fall_interval);
+        let fall_interval = if self.soft_drop_held {
+            self.fall_interval / 10.0
+        } else {
+            self.fall_interval
+        };
+        
+        self.active.fall(&mut self.fall_timer, fall_interval, dt);
 
         self.check_piece_lock();
     }
 
     fn event_handler(&mut self) {
+        let dt = get_frame_time();
         self.key_events();
 
-        self.active_event_handler();
+        self.active_event_handler(dt);
     }
 
     fn draw_manager(&self) {
