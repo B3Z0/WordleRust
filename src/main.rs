@@ -39,6 +39,87 @@ impl PieceKind {
             PieceKind::L => ORANGE,
         }
     }
+
+    fn preview_blocks(&self) -> [(i32, i32); 4] {
+        match self {
+            PieceKind::O => [(1, 1), (2, 1), (1, 2), (2, 2)],
+            PieceKind::I => [(0, 1), (1, 1), (2, 1), (3, 1)],
+            PieceKind::T => [(1, 0), (0, 1), (1, 1), (2, 1)],
+            PieceKind::S => [(1, 1), (2, 1), (0, 2), (1, 2)],
+            PieceKind::Z => [(0, 1), (1, 1), (1, 2), (2, 2)],
+            PieceKind::J => [(0, 0), (0, 1), (1, 1), (2, 1)],
+            PieceKind::L => [(2, 0), (0, 1), (1, 1), (2, 1)],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RotDir {
+    CW,
+    CCW,
+}
+#[derive(Clone, Copy)]
+struct Preview {
+    kind: PieceKind,
+    offsets: [(f32, f32); 4], // pixel offsets INSIDE the 4x4 preview box
+}
+
+impl Preview {
+    fn new(kind: PieceKind) -> Self {
+        let blocks = kind.preview_blocks(); // [(i32,i32);4] local coords
+
+        // bounds
+        let mut min_x = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut min_y = i32::MAX;
+        let mut max_y = i32::MIN;
+
+        for (x, y) in blocks {
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+        }
+
+        let piece_w = (max_x - min_x + 1) as f32;
+        let piece_h = (max_y - min_y + 1) as f32;
+
+        // center inside 4x4 (in cell units)
+        let shift_x_cells = ((4.0 - piece_w) / 2.0) - min_x as f32;
+        let shift_y_cells = ((4.0 - piece_h) / 2.0) - min_y as f32;
+
+        // convert to pixel offsets now, once
+        let mut offsets = [(0.0, 0.0); 4];
+        for (i, (x, y)) in blocks.iter().enumerate() {
+            offsets[i] = (
+                (x.clone() as f32 + shift_x_cells) * CELL_SIZE,
+                (y.clone() as f32 + shift_y_cells) * CELL_SIZE,
+            );
+        }
+
+        Self { kind, offsets }
+    }
+
+    fn draw_at(&self, box_x: f32, box_y: f32) {
+        for (dx, dy) in self.offsets {
+            draw_rectangle(
+                box_x + dx,
+                box_y + dy,
+                CELL_SIZE,
+                CELL_SIZE,
+                self.kind.color(),
+            );
+        }
+    }
+}
+
+impl RotDir {
+    fn to_rotation(self, from: u8) -> u8 {
+        match self {
+            RotDir::CW => (from + 1) % 4,
+            RotDir::CCW => (from + 3) % 4,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -342,7 +423,7 @@ struct Game {
     board: Board,
     active: ActivePiece,
     projection: ActivePiece,
-    next: PieceKind,
+    next: Preview,
 
     fall_timer: f32,
     fall_interval: f32,
@@ -362,7 +443,7 @@ impl Game {
             board: empty_board(),
             active: ActivePiece::new(PieceKind::O),
             projection: ActivePiece::new(PieceKind::O),
-            next: PieceKind::O,
+            next: Preview::new(PieceKind::O),
 
             fall_timer: 0.0,
             fall_interval: 1.0,
@@ -376,7 +457,7 @@ impl Game {
         };
 
         // Initialize "next" properly and spawn the first active piece
-        g.next = g.random_piece();
+        g.next = Preview::new(g.random_piece());
         g.spawn_from_next();
         g.update_projection();
 
@@ -398,8 +479,8 @@ impl Game {
     }
 
     fn spawn_from_next(&mut self) {
-        self.active = ActivePiece::new(self.next);
-        self.next = self.random_piece();
+        self.active = ActivePiece::new(self.next.kind);
+        self.next = Preview::new(self.random_piece());
 
         if self.active.collide_check(&self.board) {
             self.game_over = true;
@@ -436,23 +517,81 @@ impl Game {
     }
 
     fn handle_rotation(&mut self) {
-        let original_rotation = self.active.rotation;
-        self.active.rotation = (self.active.rotation + 1) % 4;
-
-        if self.active.collide_check(&self.board) {
-            let kicks = [(-1, 0), (1, 0), (0, -1)];
-            for (dx, dy) in kicks.iter() {
-                self.active.x += dx;
-                self.active.y += dy;
-                if !self.active.collide_check(&self.board) {
-                    return;
-                }
-                self.active.x -= dx;
-                self.active.y -= dy;
-            }
-
-            self.active.rotation = original_rotation;
+        if let Some(rotated) = self.try_rotate_with_kicks(self.active, RotDir::CW) {
+            self.active = rotated;
         }
+    }
+
+    fn kick_table(&self, kind: PieceKind, from: u8, to: u8, dir: RotDir) -> [(i32, i32); 5] {
+        match kind {
+            PieceKind::O => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+
+            PieceKind::I => Self::i_kicks(from, to, dir),
+
+            // J, L, S, T, Z all share the same SRS kick table
+            PieceKind::J | PieceKind::L | PieceKind::S | PieceKind::T | PieceKind::Z => {
+                Self::jlstz_kicks(from, to, dir)
+            }
+        }
+    }
+
+    fn jlstz_kicks(from: u8, to: u8, dir: RotDir) -> [(i32, i32); 5] {
+        match dir {
+            RotDir::CW => match (from, to) {
+                (0, 1) => [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+                (1, 2) => [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+                (2, 3) => [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+                (3, 0) => [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+                _ => unreachable!(),
+            },
+            RotDir::CCW => match (from, to) {
+                (0, 3) => [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+                (3, 2) => [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+                (2, 1) => [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+                (1, 0) => [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    fn i_kicks(from: u8, to: u8, dir: RotDir) -> [(i32, i32); 5] {
+        match dir {
+            RotDir::CW => match (from, to) {
+                (0, 1) => [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+                (1, 2) => [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+                (2, 3) => [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+                (3, 0) => [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+                _ => unreachable!(),
+            },
+            RotDir::CCW => match (from, to) {
+                (0, 3) => [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+                (3, 2) => [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+                (2, 1) => [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+                (1, 0) => [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    fn try_rotate_with_kicks(&self, piece: ActivePiece, dir: RotDir) -> Option<ActivePiece> {
+        let from = piece.rotation;
+        let to = dir.to_rotation(from);
+
+        // Try rotate-in-place first (kick = 0,0) plus the kick list
+        let kicks = self.kick_table(piece.kind, from, to, dir);
+
+        for (dx, dy) in kicks.iter() {
+            let mut candidate = piece;
+            candidate.rotation = to;
+            candidate.x += dx;
+            candidate.y -= dy;
+
+            if !candidate.collide_check(&self.board) {
+                return Some(candidate);
+            }
+        }
+
+        None
     }
 
     fn apply_input(&mut self, input: Input, dt: f32) {
@@ -575,7 +714,7 @@ impl Game {
 
     fn draw(&self) {
         self.graphics
-            .draw(&self.board, &self.active, &self.projection);
+            .draw(&self.board, &self.active, &self.projection, self.next);
     }
 }
 
@@ -614,31 +753,16 @@ impl DrawHandler {
         }
     }
 
-    fn draw_next_piece(&self) {
-        //square where a next piece will be shown
+    fn draw_next_piece(&self, next: Preview) {
         let square_size = CELL_SIZE * 4.;
         let x = SCREEN_WIDTH as f32 - (PADDING as f32 + square_size) / 2.;
         let y = PADDING as f32;
 
-        draw_rectangle(x, y, square_size, square_size * 3., DARKGRAY);
-        draw_line(
-            x,
-            y + square_size,
-            x + square_size,
-            y + square_size,
-            1.0,
-            GRAY,
-        );
-        draw_line(
-            x,
-            y + square_size * 2.,
-            x + square_size,
-            y + square_size * 2.,
-            1.0,
-            GRAY,
-        );
+        draw_rectangle(x, y, square_size, square_size, DARKGRAY);
 
         draw_text("Next:", x, y - 10., STD_FONT_SIZE, WHITE);
+
+        next.draw_at(x, y);
     }
 
     fn draw_board(&self, board: &Board) {
@@ -661,12 +785,18 @@ impl DrawHandler {
         projection.draw_as_projection();
     }
 
-    pub fn draw(&self, board: &Board, active: &ActivePiece, projection: &ActivePiece) {
+    pub fn draw(
+        &self,
+        board: &Board,
+        active: &ActivePiece,
+        projection: &ActivePiece,
+        next: Preview,
+    ) {
         Self::draw_text_centered("Vlad's Tetris", 50.0, STD_FONT_SIZE, WHITE);
 
         self.draw_grid();
 
-        self.draw_next_piece();
+        self.draw_next_piece(next);
 
         self.draw_board(&board);
 
@@ -714,6 +844,9 @@ async fn main() {
             );
             if is_key_released(KeyCode::Space) {
                 game = Game::new();
+            }
+            if is_key_pressed(KeyCode::Escape) {
+                std::process::exit(0);
             }
         }
 
