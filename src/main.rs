@@ -703,12 +703,8 @@ impl Game {
         let dt = get_frame_time();
         let input = self.read_input();
 
-        self.update_projection();
-
         self.apply_input(input, dt);
-
         self.check_piece_lock();
-
         self.update_projection();
     }
 
